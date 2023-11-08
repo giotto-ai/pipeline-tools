@@ -328,24 +328,46 @@ Initially, the tool divides the layers into two equal parts (in terms of the num
 If the load is not evenly distributed, we re-write the model (moving layers around) and iterate the dummy run, until we achieving uniform  distribution on N GPUs.
 
 
-## Pipeline Tool x Giotto Deep
-The Pipeline tool is seamlessly integrated into Giotto-Deep's trainer, requiring no changes to their API. To activate the pipeline mode and configure MultiHeadAttention if your model includes it, simply provide a boolean flag and the MHA configuration.
+## Pipeline Tool Example
+Two examples are provided in `examples/`. It shows how : 
 
-Here's an example: 
+1. Use the pipeline_tool
+2. Train a pipelined model
+3. Evaluating a pipelined model
+4. Save the trained model.
+
+
+## Pipeline Tool x Giotto Deep
+The Pipeline tool is seamlessly integrated into Giotto-Deep's trainer, requiring no changes to their API.
+
+Here's an example of what need to be done: 
 
 ```python
-# Example not up to date
-# trainer = Trainer(wrapped_model, [dl_train, dl_train], loss_function, writer) 
+# New import
+from gdeep.trainer.trainer import Parallelism, ParallelismType
 
-# configs = [{'embed_dim': 16, 'num_heads': 8, 'dropout': 0.1, 'batch_first': True},
-#         {'embed_dim': 16, 'num_heads': 8, 'dropout': 0.1, 'batch_first': True},
-#         {'embed_dim': 16, 'num_heads': 8, 'dropout': 0.1, 'batch_first': True},
-#         {'embed_dim': 16, 'num_heads': 8, 'dropout': 0.1, 'batch_first': True},
-#         {'embed_dim': 16, 'num_heads': 8, 'dropout': 0.1, 'batch_first': True}]
+# Create the trainer as before
+trainer = Trainer(wrapped_model, [dl_train, dl_train], loss_function, writer) 
 
-# n_epoch = 1
+# Prepare the config of the MHA
+configs = [{'embed_dim': 16, 'num_heads': 8, 'dropout': 0.1, 'batch_first': True},
+         {'embed_dim': 16, 'num_heads': 8, 'dropout': 0.1, 'batch_first': True},
+         {'embed_dim': 16, 'num_heads': 8, 'dropout': 0.1, 'batch_first': True},
+         {'embed_dim': 16, 'num_heads': 8, 'dropout': 0.1, 'batch_first': True},
+         {'embed_dim': 16, 'num_heads': 8, 'dropout': 0.1, 'batch_first': True}]
 
-# trainer.train(Adam, n_epoch, pipeline_train=True, config_mha=configs, nb_chunks=2)
+# List of device
+devices = list(range(torch.cuda.device_count()))
+
+# Use the Parallelism class created to prepare the trainer for a pipeline run
+parallel = Parallelism(ParallelismType.PIPELINE,
+                       devices,
+                       len(devices),
+                       pipeline_chunks=2,
+                       config_mha=configs)
+
+# Call the train function with the new parameter
+trainer.train(Adam, 2, parallel=parallel)
 ```
 
 ### Example
@@ -367,7 +389,53 @@ from pipeline_tool.pipeline_config import PipelineConfig
 from pipeline_tool.pipeline_tool import SkippableTracing
 ```
 
-## Profiling
+## Benchmarking
+
+A benchmarking tool has been made available. This script will test the pipeline_tool on 3 different models:
+
+1. A FFNET
+2. A CNN
+3. One VisionTransformer
+
+With these 3 models, we cover the majority of cases that the tool will have to deal with. The CNN and FFNET are two small models and will soon find it impossible to share too much, while the VisionTransformer is very large and doesn't necessarily fit on 1 GPU, but it also contains MultiHeads.
+This is how we proceed: 
+When the script is launched, we set the maximum number of GPUs in the environment (in the example below, 8), then run the first execution with the torch API to create a repository before launching the analyses with the pipeline_tool.
+
+The results are as follows: 
+
+|Framework|Model   |Number of GPUs|Number of Chunks|Time 1 [s]        |Time 2 [s]        |Time 3 [s]         |Time 4 [s]         |Alloc 1 [MB]                                                            |Alloc 2 [MB]                                                            |Alloc 3 [MB]                                                            |Alloc 4 [MB]                                                            |
+|---------|--------|--------------|----------------|------------------|------------------|-------------------|-------------------|------------------------------------------------------------------------|------------------------------------------------------------------------|------------------------------------------------------------------------|------------------------------------------------------------------------|
+|API torch|CNN     |1             |0               | 1.99 |0.53|0.53 |0.54 |[747]                                                                   |[625]                                                                   |[625]                                                                   |[625]                                                                   |
+|API torch|FFNET   |1             |0               |0.85 |0.25|0.24|0.25|[676]                                                                   |[520]                                                                   |[520]                                                                   |[520]                                                                   |
+|Pipeline |CNN     |1             |2               |2.73|1.16|1.22 |1.28  |[844]                                                                   |[698]                                                                   |[698]                                                                   |[698]                                                                   |
+|Pipeline |CNN     |2             |2               |3.4|2.03|2.05  |2.14 |[706, 537]                                                              |[582, 514]                                                              |[582, 514]                                                              |[582, 514]                                                              |
+|Pipeline |CNN     |3             |2               |4.24|2.22|2.31  |2.26 |[706, 0, 537]                                                           |[582, 0, 514]                                                           |[582, 0, 514]                                                           |[582, 0, 514]                                                           |
+|Pipeline |CNN     |4             |2               |6.48 |3.31 |3.36  |3.43  |[99, 611, 534, 517]                                                     |[69, 514, 513, 514]                                                     |[69, 514, 513, 514]                                                     |[69, 514, 513, 514]                                                     |
+|Pipeline |CNN     |5             |2               |7.95 |3.97 |4.0  |4.14  |[104, 87, 611, 534, 516]                                                |[79, 45, 514, 513, 513]                                                 |[79, 45, 514, 513, 513]                                                 |[79, 45, 514, 513, 513]                                                 |
+|Pipeline |CNN     |6             |2               |9.27  |5.427 |5.37 |5.447  |[104, 93, 0, 611, 534, 516]                                             |[79, 51, 0, 514, 513, 513]                                              |[79, 51, 0, 514, 513, 513]                                              |[79, 51, 0, 514, 513, 513]                                              |
+|Pipeline |CNN     |7             |2               |9.72  |5.97 |5.63  |5.86   |[79, 110, 0, 611, 534, 0, 516]                                          |[54, 68, 0, 514, 513, 0, 513]                                           |[54, 68, 0, 514, 513, 0, 513]                                           |[54, 68, 0, 514, 513, 0, 513]                                           |
+|Pipeline |FFNET   |1             |2               |1.37|0.67|0.7 |0.71 |[830]                                                                   |[668]                                                                   |[668]                                                                   |[668]                                                                   |
+|Pipeline |FFNET   |2             |2               |2.54 |1.4|1.37  |1.45  |[681, 517]                                                              |[522, 514]                                                              |[522, 514]                                                              |[522, 514]                                                              |
+|Pipeline |VisionTransformer|2             |2               |2270.45 |2269.89|2270.93  |2271.06 |[4593434, 4644371]                                                      |[3979519, 3958031]                                                      |[3979519, 3958031]                                                      |[3979519, 3958031]                                                      |
+|Pipeline |VisionTransformer|3             |2               |2015.97|2014.98|2015.59 |2016.3 |[2970001, 3472961, 3062524]                                             |[2574197, 3021793, 2635734]                                             |[2574197, 3021793, 2635734]                                             |[2574197, 3021793, 2635734]                                             |
+|Pipeline |VisionTransformer|4             |2               |1862.57|1861.44 |1862.19 |1862.48   |[2413209, 2563197, 2521879, 2436588]                                    |[2119623, 2228904, 2145561, 2112281]                                    |[2119623, 2228904, 2145561, 2112281]                                    |[2119623, 2228904, 2145561, 2112281]                                    |
+|Pipeline |VisionTransformer|5             |2               |1788.47|1786.39|1786.99 |1787.25 |[1935877, 2230125, 2003022, 2197198, 1958722]                           |[1706017, 1918617, 1732474, 1925785, 1657517]                           |[1706017, 1918617, 1732474, 1925785, 1657517]                           |[1706017, 1918617, 1732474, 1925785, 1657517]                           |
+|Pipeline |VisionTransformer|6             |2               |1718.44|1715.75|1716.21 |1716.23  |[1670025, 1965041, 1765997, 1938513, 1765997, 1693225]                  |[1478507, 1691115, 1546192, 1664987, 1546192, 1430453]                  |[1478567, 1691115, 1546192, 1664987, 1546192, 1430453]                  |[1478567, 1691115, 1546192, 1664987, 1546192, 1430453]                  |
+|Pipeline |VisionTransformer|7             |2               |1680.24|1676.8 |1676.74 |1676.7 |[1616444, 1470947, 1618210, 1705620, 1470947, 1671737, 1454147]         |[1437800, 1277582, 1436969, 1498672, 1277582, 1477999, 1229807]         |[1437800, 1277582, 1436969, 1498672, 1277582, 1477999, 1229807]         |[1437800, 1277582, 1436969, 1498672, 1277582, 1477999, 1229807]         |
+|Pipeline |VisionTransformer|8             |2               |1635.16|1631.67|1632.07   |1632.32  |[1350652, 1446284, 1445966, 1492565, 1485961, 1431457, 1377890, 1366146]|[1210541, 1278218, 1277900, 1312002, 1276935, 1209459, 1209459, 1195574]|[1210541, 1278218, 1277900, 1312002, 1276935, 1209459, 1209459, 1195574]|[1210541, 1278218, 1277900, 1312002, 1276935, 1209459, 1209459, 1195574]|
+
+
+### Result analysis
+Firstly, we notice that some results are missing, for example for FFNET we only have results on 1 or 2 GPUs etc... It's simply that when an error occurs, the result is not stored in the benchmark. But there are 4 possible types of error: 
+
+1. If the first/last GPU in the chain has only one layer, it cannot be executed.
+2. One of the GPUs has 0 layers.
+3. Cuda Out of Memory, at least 1 of the GPUs can't handle the amount of layers and data given to it.
+4. Finally, an error occurs during training.
+
+If none of these errors occur, the results are stored.
+
+So, based on this, we can see right away that no input is available with the torch API for the VisionTransformer, simply because it doesn't fit on a single GPU. As a result, the pipeline tool allows the model to be separated on multiple GPUs. Another point to note is that the tool slows down execution time anyway, due to the added communication between GPUs. So it can't be used routinely, and should only be used in really useful cases, i.e. when the model can't fit on a single GPU.
 
 ## Improvements
 1. Although repartition is currently performed, it is unnecessary when the model fits within a single GPU. The process should automatically avoid splitting when feasible, requiring an initial run on the largest GPU and an error-handling mechanism.
@@ -376,6 +444,68 @@ from pipeline_tool.pipeline_tool import SkippableTracing
     1. Change the analysis return by the script `evaluate_mem.py` to return time and not memory balancing.
     2. Find a way to preprocess and create all potential best repartition to avoid testing all possibility that could exponetial on process time depending on the number of layers.
     3. Change the behaviour to test all pre-calculated possibility and not stop and keep the fastest one.
+
+    Here the time analysis made, in italic are the chosen repartition and in bold the minimal execution time:
+
+    | **Model**         | **Nb GPU** | **Repartition**                  | **Epoch 1** | **Epoch 2** | **Epoch 3** | **Minimal Epoch time** |
+    | ----------------- | ---------- | -------------------------------- | ----------- | ----------- | ----------- | ---------------------- |
+    | CNN               | 2          | [7, 7]                           | 3.85        | 1.84        | **1.79**    |                        |
+    | CNN               | 2          | [8, 6]                           | 3.81        | 1.91        | 1.85        |                        |
+    | *CNN*             | *2*        | *[9, 5]*                         | *4.02*      | *1.89*      | *1.84*      | 1.79                   |
+    |                   |            |                                  |             |             |             |                        |
+    | CNN               | 3          | [5, 5, 4]                        | 5.08        | 2.49        | 2.55        |                        |
+    | CNN               | 3          | [6, 4, 4]                        | 5.05        | 2.65        | 2.66        |                        |
+    | CNN               | 3          | [7, 3, 4]                        | 4.95        | 2.62        | 2.51        |                        |
+    | CNN               | 3          | [8, 2, 4]                        | 5.13        | 2.54        | 2.62        |                        |
+    | *CNN*             | *3*        | *[9, 1, 4]*                      | *4.20*      | *2.21*      | **2.21**    | 2.21                   |
+    |                   |            |                                  |             |             |             |                        |
+    | CNN               | 4          | [4, 4, 3, 3]                     | 6.66        | 3.20        | 3.32        |                        |
+    | CNN               | 4          | [4, 5, 2, 3]                     | 6.65        | 3.36        | 3.40        |                        |
+    | CNN               | 4          | [5, 4, 2, 3]                     | 6.20        | 3.32        | 3.25        |                        |
+    | CNN               | 4          | [6, 3, 2, 3]                     | 6.14        | 3.21        | 3.16        |                        |
+    | CNN               | 4          | [7, 2, 2, 3]                     | 6.07        | 3.23        | 3.28        |                        |
+    | *CNN*             | *4*        | *[8, 1, 2, 3]*                   | *6.08*      | *3.31*      | *3.35*      |                        |
+    | CNN               | 4          | [9, 1, 1, 3]                     | 5.39        | 2.88        | **2.88**    | 2.88                   |
+    |                   |            |                                  |             |             |             |                        |
+    | CNN               | 5          | [3, 3, 3, 3, 2]                  | 7.96        | 3.96        | 3.85        |                        |
+    | CNN               | 5          | [3, 4, 2, 3, 2]                  | 7.81        | 3.87        | 3.73        |                        |
+    | CNN               | 5          | [3, 5, 1, 3, 2]                  | 7.86        | 3.85        | 4.05        |                        |
+    | CNN               | 5          | [3, 6, 1, 2, 2]                  | 7.05        | 3.61        | **3.53**    |                        |
+    | *CNN*             | *5*        | *[3, 5, 2, 2, 2]*                | *7.87*      | *3.81*      | *3.91*      | 3.53                   |
+    |                   |            |                                  |             |             |             |                        |
+    | *CNN*             | *6*        | *[3, 3, 2, 2, 2, 2]*             | *8.95*      | *4.98*      | *4.79*      |                        |
+    | CNN               | 6          | [3, 3, 3, 1, 2, 2]               | 8.10        | **4.07**    | 4.19        | 4.07                   |
+    |                   |            |                                  |             |             |             |                        |
+    | CNN               | 7          | [2, 2, 2, 2, 2, 2, 2]            | 8.55        | 4.60        | 4.64        |                        |
+    | CNN               | 7          | [2, 3, 2, 2, 1, 2, 2]            | 9.59        | 5.69        | 5.53        |                        |
+    | *CNN*             | *7*        | *[2, 3, 3, 1, 1, 2, 2]*          | *9.26*      | *5.71*      | *5.69*      |                        |
+    | CNN               | 7          | [2, 3, 4, 1, 1, 1, 2]            | 8.44        | 4.56        | **4.42**    | 4.42                   |
+    |                   |            |                                  |             |             |             |                        |
+    | *FFNET*           | *2*        | *[3, 2]*                         | *2.39*      | *1.32*      | **1.27**    |                        |
+    | FFNET             | 2          | [2, 3]                           | 2.41        | 1.39        | 1.34        | 1.27                   |
+    |                   |            |                                  |             |             |             |                        |
+    | *VisionTransformer* | *2*      | *[184, 184]*                     | *471.70*    | *470.42*    | *470.53*    |                        |
+    |                   |            |                                  |             |             |             |                        |
+    | *VisionTransformer* | *3*      | *[123, 123, 122]*                | *418.28*    | *416.19*    | *416.29*    |                        |
+    |                   |            |                                  |             |             |             |                        |
+    | *VisionTransformer* | *4*      | *[92, 92, 92, 92]*               | *385.19*    | *382.62*    | *383.39*    |                        |
+    |                   |            |                                  |             |             |             |                        |
+    | *VisionTransformer* | *5*      | *[74, 74, 74, 73, 73]*           | *370.09*    | *367.58*    | *367.66*    |                        |
+    |                   |            |                                  |             |             |             |                        |
+    | VisionTransformer | 6          | [62, 62, 61, 61, 61, 61]         | 356.13      | **353.30**  | 353.54      |                        |
+    | *VisionTransformer* | *6*      | *[63, 62, 61, 60, 61, 61]*       | *357.41*    | *354.58*    | *354.84*    | 353.30                 |
+    |                   |            |                                  |             |             |             |                        |
+    | VisionTransformer | 7          | [53, 53, 53, 53, 52, 52, 52]     | 347.54      | **345.12**  | 345.18      |                        |
+    | VisionTransformer | 7          | [54, 53, 52, 53, 52, 52, 52]     | 351.04      | 347.78      | 347.89      |                        |
+    | VisionTransformer | 7          | [55, 52, 52, 53, 52, 52, 52]     | 349.60      | 346.24      | 346.29      |                        |
+    | VisionTransformer | 7          | [56, 52, 51, 53, 52, 52, 52]     | 349.48      | 346.58      | 346.45      |                        |
+    | VisionTransformer | 7          | [57, 52, 50, 53, 52, 52, 52]     | 349.51      | 346.42      | 346.55      |                        |
+    | VisionTransformer | 7          | [58, 52, 49, 53, 52, 52, 52]     | 348.30      | 345.28      | 345.35      |                        |
+    | *VisionTransformer* | *7*      | *[59, 52, 49, 53, 52, 51, 52]*   | *348.69*    | *345.15*    | *345.28*    | 345.12                 |
+    |                   |            |                                  |             |             |             |                        |
+    | VisionTransformer | 8          | [46, 46, 46, 46, 46, 46, 46, 46] | 342.10      | 338.47      | 338.73      |                        |
+    | VisionTransformer | 8          | [47, 45, 46, 46, 46, 46, 46, 46] | 342.17      | 338.51      | 338.44      |                        |
+    | *VisionTransformer* | *8*      | *[48, 44, 46, 46, 46, 46, 46, 46]* | *339.99*  | *336.45*    | **336.44**  | 336.44                 |
 
 ## Known issue
 1. The pipeline of Persformers in more than 2 GPU have backward process problem for an unknow reason and no error is throw.
