@@ -34,5 +34,5 @@ batch_size = 4
 config_pipeline = PipelineConfig(input_shape=[batch_size, 3, 32, 32],
                                  output_shape=[batch_size],
                                  data_type="long")
-
-trace = SkippableTracing(nb_gpus=0, model=model, config=config_pipeline)
+def test_trace_simple():
+    trace = SkippableTracing(nb_gpus=0, model=model, config=config_pipeline)
