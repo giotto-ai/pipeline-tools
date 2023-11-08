@@ -13,7 +13,8 @@ Authors:
 Pipeline-tool Project Team:
 ------------------------
 
-- Yorick Brunet yorick.brunet@heig-vd.ch.ch (Developer)
+- Bruno Da Rocha Carvalho, bruno.darochacarvalho@heig-vd.ch (Developer)
+- Gabriel Catel Torres Arzur, arzur.cateltorres@heig-vd.ch (Developer)
 - Matteo Caorsi m.caorsi@l2f.ch (Project Leader)
 
 Former Project Team Members:

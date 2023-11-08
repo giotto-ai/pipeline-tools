@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+include = [
+    "pipeline_tool/",
+]
+exclude = [
+    "pipeline_tool/pipelinecache/",
+]
+
+[project]
+name = "pipeline_tool"
+
+version = "0.0.1"
+
+authors = [
+    {name="Bruno Da Rocha Carvalho", email="bruno.darochacarvalho@heig-vd.ch"},
+    {name="Gabriel Catel Torres Arzur", email="arzur.cateltorres@heig-vd.ch"}
+]
+
+description = "Alow splitting of big model in multiple GPU for training"
+
+readme = "README.md"
+
+license = {file = "LICENSE"}
+
+requires-python = ">=3.8"
+
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Environment :: GPU :: NVIDIA CUDA :: 12",
+    "Natural Language :: English",
+    "Operating System :: Unix",
+]
+
+dependencies = [
+    "torch>=1.13.0",
+    "numpy>=1.23.3",
+    "torchvision>=0.14.0",
+]
+
+

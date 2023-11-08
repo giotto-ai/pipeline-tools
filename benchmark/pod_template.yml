@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pipeline-benchmark
+  namespace: default
+  annotations:
+    gke-gcsfuse/volumes: "true"
+spec:
+  terminationGracePeriodSeconds: 60
+  volumes:
+  - name: gcs-fuse-csi-ephemeral
+    csi:
+      driver: gcsfuse.csi.storage.gke.io
+      volumeAttributes:
+        bucketName: $bucket
+  - name: shared-memory
+    emptyDir:
+      medium: Memory
+      sizeLimit: 16Gi
+  containers:
+  - name: pipeline-benchmark
+    image: $image
+    args: ["$gpu_count"]
+    resources:
+      limits:
+        nvidia.com/gpu: $gpu_count
+    volumeMounts:
+    - mountPath: "/var/lib/data"
+      name: gcs-fuse-csi-ephemeral
+    - mountPath: /dev/shm
+      name: shared-memory
+    imagePullPolicy: Always
+  serviceAccountName: $ksa
+  restartPolicy: Never
+  nodeSelector:
+    cloud.google.com/gke-accelerator: $gpu_model
