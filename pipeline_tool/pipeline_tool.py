@@ -450,4 +450,9 @@ class SkippableTracing:
             for pop_parent in layer.get_pop_parent():
                 self.LayerLists[pop_parent[0]].set_stash(layer.get_node())
 
-        self._repartition()
+
+        # Test mode without GPUs
+        if self.nb_gpu == 0:
+            print("Pipeline tool as performed a full tracing, but is not allowed to use GPU.")
+        else:
+            self._repartition()
