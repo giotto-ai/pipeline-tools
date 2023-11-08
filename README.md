@@ -6,24 +6,24 @@
 
 ## Introduction
 
-The field of machine learning is constantly evolving, with increasingly sophisticated models and ever-expanding datasets. Significant challenges can arise for professionals in the field, especially when it comes to training models that are too large to fit into the memory of a single GPU.
+The field of machine learning is constantly evolving, with increasingly sophisticated models and ever-expanding datasets. Professionals in the field can face significant challenges, especially when it comes to training models that are too large to fit into the memory of a single GPU.
 
-In this context, a tool has been developed to distribute a PyTorch machine learning model across multiple GPUs without altering the training process. The PyTorch model description is taken as input, each layer is interpreted independently, and the model is rewritten to handle the operations interdependencies. The result is a new model that can be automatically distributed (creating a pileline) across multiple GPUs that does not affects the results quality.
+In this context, developers have created a tool for distributing a PyTorch machine learning model across multiple GPUs without altering the training process. The tool takes the PyTorch model description as input, interprets each layer independently, and rewrites the model to handle the operations' interdependencies. The result is a new model that can be automatically distributed (creating a pipeline) across multiple GPUs without affecting the quality of the results.
 
-In the following, this tool will be presented in detail, along with the benefits it can provide to machine learning professionals seeking to train large and complex models.
+In the following, we will present this tool in detail, along with the benefits it can offer to machine learning professionals seeking to train large and complex models
 
 ## How it works
 
 ### First step
 
-To run the tool, you have to provide some parameters:
+To run the tool, you need to provide some parameters:
 
-- Number of GPUs: If the user does not specify the number of GPUs to use, the tool will automatically detect the available GPUs on the machine running the command. In this case, the model will be trained using all detected GPUs to improve performance.
-- PyTorch Model: The user must provide a PyTorch model that only uses functions and modules coming from the PyTorch API. In other words, the model should not incorporate custom functions unknown to the PyTorch API. However, it is entirely possible to create custom layers using combinations of functions (always from the PyTorch API).
-- Shapes of the input and output: This will be needed to profile [memory usage](#model-splitting).
-- Data type that will be passed in the model, for example float.
+- Number of GPUs: If the user doesn't specify the number of GPUs to use, the tool will automatically detect the available GPUs on the machine running the command. In this case, the model will be trained using all detected GPUs to improve performance.
+- PyTorch Model: The user must provide a PyTorch model that only uses functions and modules from the PyTorch API. In other words, the model should not incorporate custom functions unknown to the PyTorch API. However, you can create custom layers using combinations of functions (always from the PyTorch API).
+- Shapes of the input and output: You will need to provide these to profile[memory usage](#model-splitting).
+- Data type that will be passed into the model, for example, float.
 
-The first step is adding the following imports in your project:
+The first step is to add the following imports to your project:
 
 ```python
 from torch.distributed.pipeline.sync import Pipe 
@@ -31,14 +31,14 @@ from pipeline_tool.pipeline_tool import SkippableTracing
 from pipeline_tool.pipeline_config import PipelineConfig
 ```
 
-Next, you need to use the PipelineConfig class, which allows you to prepare the necessary parameters (input and output shape, data type).
+Next, you should use the PipelineConfig class, which enables you to prepare the necessary parameters (input and output shape, data type).
 
 ```python
  config = PipelineConfig([X, Y, Z], [X, Y], "dtype")
 ```
 > *One important thing to know is that the first number given in input/output shape is your batch size.*
 
-Once you have defined your config and create your model, you can process it as show in the example bellow.
+Once you have defined your config and created your model, you can process it as shown in the example below.
 
 ```python
 N_GPUs = 2
@@ -46,13 +46,13 @@ trace = SkippableTracing(N_GPUs, model, config)
 graph_model = trace.get_modules()
 ```
 
-Here the model is traced using [torch.fx](https://pytorch.org/docs/stable/fx.html) to obtain the GraphModule. This allows us to determine, for each module, its type, parameters, functions (e.g., convolution, activation, multiplication) and their links to others modules.
+Here, we trace the model using [torch.fx](https://pytorch.org/docs/stable/fx.html) to obtain the GraphModule. This allows us to determine, for each module, its type, parameters, functions (e.g., convolution, activation, multiplication), and their links to other modules.
 
-Bellow an example of how is treated a simple model : 
+Below is an example of how a simple model is treated:
 
 ![03_simple_model_dep](img/03_simple_model_dep.png)
 
-In this basic example, we have a model composed exclusively of PyTorch modules. To describe them accurately, we utilize the trace generated by torch fx. 
+In this basic example, we have a model composed exclusively of PyTorch modules. To describe them accurately, we utilize the trace generated by torch fx.
 
 The generated trace appears as follows:
 
@@ -84,7 +84,127 @@ softmax         Softmax(dim=None)
 
 The retrieval, analysis, and management of all this information enable the generation of a file containing a new model ready for pipelined training on N GPUs.
 
-### Complex Models
+### Model splitting
+
+Now that we can create a model that can be distributed across multiple GPUs, the question arises: how do we split it intelligently? Currently, the tool proceeds with a somewhat naive approach. We create a dummy dataset to pass through the model and perform a training run. This allows us to measure the memory loads on all GPUs.
+
+Initially, the tool divides the layers into two equal parts (in terms of the number of layers) and conducts these memory load measurements.
+If the load is not evenly distributed, we rewrite the model (moving layers around) and iterate the dummy run until we achieve uniform distribution on N GPUs.
+
+## Pipeline Tool Example
+Two examples are provided in [examples/](./examples/). They demonstrate how to:
+
+1. Use the pipeline_tool
+2. Train a pipelined model
+3. Evaluating a pipelined model
+4. Save the trained model.
+
+
+## Pipeline Tool in Giotto Deep
+The Pipeline tool is seamlessly integrated into Giotto-Deep's trainer, requiring no changes to its API.
+
+Here's an example of what you need to do:
+
+```python
+# New import
+from gdeep.trainer.trainer import Parallelism, ParallelismType
+
+# Create the trainer as before
+trainer = Trainer(wrapped_model, [dl_train, dl_train], loss_function, writer) 
+
+# Prepare the config of the MHA
+configs = [{'embed_dim': 16, 'num_heads': 8, 'dropout': 0.1, 'batch_first': True},
+         {'embed_dim': 16, 'num_heads': 8, 'dropout': 0.1, 'batch_first': True},
+         {'embed_dim': 16, 'num_heads': 8, 'dropout': 0.1, 'batch_first': True},
+         {'embed_dim': 16, 'num_heads': 8, 'dropout': 0.1, 'batch_first': True},
+         {'embed_dim': 16, 'num_heads': 8, 'dropout': 0.1, 'batch_first': True}]
+
+# List of device
+devices = list(range(torch.cuda.device_count()))
+
+# Use the Parallelism class created to prepare the trainer for a pipeline run
+parallel = Parallelism(ParallelismType.PIPELINE,
+                       devices,
+                       len(devices),
+                       pipeline_chunks=2,
+                       config_mha=configs)
+
+# Call the train function with the new parameter
+trainer.train(Adam, 2, parallel=parallel)
+```
+
+### Example
+To experiment with Giotto Deep training using the Pipeline tool in your environment, we have provided two example scripts. Navigate to Giotto's examples folder and run either [pipeline_basic_image.py](TODO) or [pipeline_orbit5k.py](TODO) with the --pipeline argument to enable the pipeline mode, or without it for regular training.
+
+## Installation
+
+
+### Install from sources
+Launch from the root of the project:
+
+```bash
+pip install .
+```
+This will install pipeline_tool on your Python environment.
+
+The necessary imports are:
+```python3
+from pipeline_tool.pipeline_config import PipelineConfig
+from pipeline_tool.pipeline_tool import SkippableTracing
+```
+
+## Benchmarking
+
+A benchmarking tool is available. This script will test the pipeline_tool on 3 different models:
+
+1. A FFNET
+2. A CNN
+3. One VisionTransformer
+
+With these 3 models, we cover the majority of cases that the tool has to deal with. "The CNN and FFNET are two small models and quickly become unable to be split too much, while the VisionTransformer is very large and may not necessarily fit on 1 GPU, and it also contains MultiHeads.
+
+This is how we proceed: 
+
+When you launch the script, set the maximum number of GPUs in the environment (in the example below, 8), then run the first execution with the torch API to create a repository before launching the analyses with the pipeline_tool.
+
+The results are as follows: 
+
+|Framework|Model   |Number of GPUs|Number of Chunks|Time [s] | Alloc [MB] |
+|---------|--------|--------------|----------------|------------------|------------------|
+|API torch|CNN     |1             |0               |0.53|[625]|
+|API torch|FFNET   |1             |0               |0.25|[520]|
+|Pipeline |CNN     |1             |2               |1.16|[698]|
+|Pipeline |CNN     |2             |2               |2.03|[582, 514]|
+|Pipeline |CNN     |3             |2               |2.22|[582, 0, 514]|
+|Pipeline |CNN     |4             |2               |3.31|[69, 514, 513, 514]|
+|Pipeline |CNN     |5             |2               |3.97|[79, 45, 514, 513, 513]|
+|Pipeline |CNN     |6             |2               |5.427|[79, 51, 0, 514, 513, 513]|
+|Pipeline |CNN     |7             |2               |5.97|[54, 68, 0, 514, 513, 0, 513]|
+|Pipeline |FFNET   |1             |2               |0.67|[668]|
+|Pipeline |FFNET   |2             |2               |1.4|[522, 514]|
+|Pipeline |VisionTransformer|2             |2      |2269.89|[3979519, 3958031]|
+|Pipeline |VisionTransformer|3             |2      |2014.98|[2574197, 3021793, 2635734]|
+|Pipeline |VisionTransformer|4             |2      |1861.44|[2119623, 2228904, 2145561, 2112281]|
+|Pipeline |VisionTransformer|5             |2      |1786.39|[1706017, 1918617, 1732474, 1925785, 1657517]|
+|Pipeline |VisionTransformer|6             |2      |1715.75|[1478507, 1691115, 1546192, 1664987, 1546192, 1430453]|
+|Pipeline |VisionTransformer|7             |2      |1676.8 |[1437800, 1277582, 1436969, 1498672, 1277582, 1477999, 1229807]|
+|Pipeline |VisionTransformer|8             |2      |1631.67|[1210541, 1278218, 1277900, 1312002, 1276935, 1209459, 1209459, 1195574]|
+
+
+### Result analysis
+Firstly, we notice that some results are missing; for example, for the FFNET, we only have results on 1 or 2 GPUs, etc. It's simply because when an error occurs, we don't store the result in the benchmark. But there are 4 possible types of error:
+
+1. If the first/last GPU in the chain has only one layer, it cannot be executed.
+2. One of the GPUs has 0 layers.
+3. Cuda Out of Memory, at least 1 of the GPUs can't handle the amount of layers and data given to it.
+4. Finally, an error occurs during training.
+
+If none of these errors occur, we store the results.
+
+So, based on this, we can see right away that no input is available with the torch API for the VisionTransformer, simply because it doesn't fit on a single GPU. As a result, the pipeline tool allows the model to be separated on multiple GPUs; we can see that with the VisionTransformers that can only be run on more than 1 GPU. Another point to note is that the tool slows down execution time anyway, due to the added communication between GPUs; execution time between the torch API and runs of the Pipeline in 1 GPU show it clearly. So you can't use it routinely and should only use it in really useful cases, i.e., when the model can't fit on a single GPU.
+
+
+## Complex Models
 
 Unfortunately, a model is never limited to a simple linear sequence of modules taking the output of the previous operation as input... More complex models exist, and it is necessary to handle all possible cases, to trace the model correctly so that it is faithfully reproduced without omitting certain operations.
 
@@ -100,7 +220,7 @@ We can then iterate over the generated trace to differentiate five types of laye
 4. <u>**Getattr**</u>: These correspond to retrieving an attribute of a tensor.
 5. <u>**Propagation**</u>: These appear in the trace to propagate tensors to other layers.
 
-#### call_function
+### call_function
 
 Let's explore the concept of call_function with the widely known ResNet model.
 
@@ -134,7 +254,7 @@ Functions do not necessitate an initialization function. Instead, our tool seeks
 
 The trace allows us to identify the arguments passed to this function. In the case above, the inputs are the output of the previous layer and the integer "1".
 
-#### Propagation
+### Propagation
 
 As discussed in the section on [complex models](#complex-models) there are instances where we need to transmit the output of one layer to others that are not inherently connected to it. To facilitate this process, PyTorch provides a useful decorator called "skippable." This decorator introduces two key features:
 
@@ -208,7 +328,7 @@ class add_layer(nn.Module):
 We ensure that the dependencies between layers are properly preserved.
 
 
-#### Getitem
+### Getitem
 
 Within the trace, certain call_function entries contain the term "getitem" in their names. This indicates that these are not conventional functions but rather indicate the need to access a specific index within a result. Consider the following trace as an example:
 
@@ -223,7 +343,7 @@ Here, we notice the presence of a getitem operation, which is applied to the res
 
 The challenge with getitem lies in the limitation of the Torch API, which does not allow the propagation of non-tensor values. Consequently, we must concatenate the getitem operation to the layer from which we require the value, rather than creating an independent layer that cannot effectively transmit its output.
 
-#### GetAttr
+### GetAttr
 
 There are two distinct types of `getattr` operations: 
 
@@ -283,7 +403,7 @@ There are two distinct types of `getattr` operations:
            return ret
    ```
 
-#### MultiHeadAttention processing
+### MultiHeadAttention processing
 
 Unpredictable management is, however, necessary for MultiHeadAttention. During the module declaration retrieval phase, it is impossible to retrieve those of the MultiHeadAttention. Therefore, the user must provide a dictionary containing the description of all the parameters and their values for the MultiHeadAttention of their model during the tool's initialization.
 
@@ -320,132 +440,18 @@ And the initialization would be changed to three alternative:
     # TODO EXPLAINATION
     ```
 
-### Model splitting
-
-Now that we are capable of creating a model that can be distributed across multiple GPUs, the question arises: how do we split it intelligently? Currently, the tool proceeds with a somewhat naive approach. We create a dummy dataset to pass through the model and perform a training run. This allows us to measure the memory loads on all GPUs.
-
-Initially, the tool divides the layers into two equal parts (in terms of the number of layers) and conducts these memory load measurements.
-If the load is not evenly distributed, we re-write the model (moving layers around) and iterate the dummy run, until we achieving uniform  distribution on N GPUs.
-
-
-## Pipeline Tool Example
-Two examples are provided in `examples/`. It shows how : 
-
-1. Use the pipeline_tool
-2. Train a pipelined model
-3. Evaluating a pipelined model
-4. Save the trained model.
-
-
-## Pipeline Tool x Giotto Deep
-The Pipeline tool is seamlessly integrated into Giotto-Deep's trainer, requiring no changes to their API.
-
-Here's an example of what need to be done: 
-
-```python
-# New import
-from gdeep.trainer.trainer import Parallelism, ParallelismType
-
-# Create the trainer as before
-trainer = Trainer(wrapped_model, [dl_train, dl_train], loss_function, writer) 
-
-# Prepare the config of the MHA
-configs = [{'embed_dim': 16, 'num_heads': 8, 'dropout': 0.1, 'batch_first': True},
-         {'embed_dim': 16, 'num_heads': 8, 'dropout': 0.1, 'batch_first': True},
-         {'embed_dim': 16, 'num_heads': 8, 'dropout': 0.1, 'batch_first': True},
-         {'embed_dim': 16, 'num_heads': 8, 'dropout': 0.1, 'batch_first': True},
-         {'embed_dim': 16, 'num_heads': 8, 'dropout': 0.1, 'batch_first': True}]
-
-# List of device
-devices = list(range(torch.cuda.device_count()))
-
-# Use the Parallelism class created to prepare the trainer for a pipeline run
-parallel = Parallelism(ParallelismType.PIPELINE,
-                       devices,
-                       len(devices),
-                       pipeline_chunks=2,
-                       config_mha=configs)
-
-# Call the train function with the new parameter
-trainer.train(Adam, 2, parallel=parallel)
-```
-
-### Example
-To experiment with Giotto Deep training using the Pipeline tool in your environment, two example scripts have been provided. Navigate to Giotto's examples folder and run either "pipeline_basic_image.py" or "pipeline_orbit5k.py" with the --pipeline argument to enable the pipeline mode, or without it for regular training.
-
-## Installation
-
-### Install from sources
-Launch from the root of the project:
-
-```bash
-pip install .
-```
-It will install pipeline_tool on your python envrionement.
-
-The import necessary are :
-```python3
-from pipeline_tool.pipeline_config import PipelineConfig
-from pipeline_tool.pipeline_tool import SkippableTracing
-```
-
-## Benchmarking
-
-A benchmarking tool has been made available. This script will test the pipeline_tool on 3 different models:
-
-1. A FFNET
-2. A CNN
-3. One VisionTransformer
-
-With these 3 models, we cover the majority of cases that the tool will have to deal with. The CNN and FFNET are two small models and will soon find it impossible to share too much, while the VisionTransformer is very large and doesn't necessarily fit on 1 GPU, but it also contains MultiHeads.
-This is how we proceed: 
-When the script is launched, we set the maximum number of GPUs in the environment (in the example below, 8), then run the first execution with the torch API to create a repository before launching the analyses with the pipeline_tool.
-
-The results are as follows: 
-
-|Framework|Model   |Number of GPUs|Number of Chunks|Time 1 [s]        |Time 2 [s]        |Time 3 [s]         |Time 4 [s]         |Alloc 1 [MB]                                                            |Alloc 2 [MB]                                                            |Alloc 3 [MB]                                                            |Alloc 4 [MB]                                                            |
-|---------|--------|--------------|----------------|------------------|------------------|-------------------|-------------------|------------------------------------------------------------------------|------------------------------------------------------------------------|------------------------------------------------------------------------|------------------------------------------------------------------------|
-|API torch|CNN     |1             |0               | 1.99 |0.53|0.53 |0.54 |[747]                                                                   |[625]                                                                   |[625]                                                                   |[625]                                                                   |
-|API torch|FFNET   |1             |0               |0.85 |0.25|0.24|0.25|[676]                                                                   |[520]                                                                   |[520]                                                                   |[520]                                                                   |
-|Pipeline |CNN     |1             |2               |2.73|1.16|1.22 |1.28  |[844]                                                                   |[698]                                                                   |[698]                                                                   |[698]                                                                   |
-|Pipeline |CNN     |2             |2               |3.4|2.03|2.05  |2.14 |[706, 537]                                                              |[582, 514]                                                              |[582, 514]                                                              |[582, 514]                                                              |
-|Pipeline |CNN     |3             |2               |4.24|2.22|2.31  |2.26 |[706, 0, 537]                                                           |[582, 0, 514]                                                           |[582, 0, 514]                                                           |[582, 0, 514]                                                           |
-|Pipeline |CNN     |4             |2               |6.48 |3.31 |3.36  |3.43  |[99, 611, 534, 517]                                                     |[69, 514, 513, 514]                                                     |[69, 514, 513, 514]                                                     |[69, 514, 513, 514]                                                     |
-|Pipeline |CNN     |5             |2               |7.95 |3.97 |4.0  |4.14  |[104, 87, 611, 534, 516]                                                |[79, 45, 514, 513, 513]                                                 |[79, 45, 514, 513, 513]                                                 |[79, 45, 514, 513, 513]                                                 |
-|Pipeline |CNN     |6             |2               |9.27  |5.427 |5.37 |5.447  |[104, 93, 0, 611, 534, 516]                                             |[79, 51, 0, 514, 513, 513]                                              |[79, 51, 0, 514, 513, 513]                                              |[79, 51, 0, 514, 513, 513]                                              |
-|Pipeline |CNN     |7             |2               |9.72  |5.97 |5.63  |5.86   |[79, 110, 0, 611, 534, 0, 516]                                          |[54, 68, 0, 514, 513, 0, 513]                                           |[54, 68, 0, 514, 513, 0, 513]                                           |[54, 68, 0, 514, 513, 0, 513]                                           |
-|Pipeline |FFNET   |1             |2               |1.37|0.67|0.7 |0.71 |[830]                                                                   |[668]                                                                   |[668]                                                                   |[668]                                                                   |
-|Pipeline |FFNET   |2             |2               |2.54 |1.4|1.37  |1.45  |[681, 517]                                                              |[522, 514]                                                              |[522, 514]                                                              |[522, 514]                                                              |
-|Pipeline |VisionTransformer|2             |2               |2270.45 |2269.89|2270.93  |2271.06 |[4593434, 4644371]                                                      |[3979519, 3958031]                                                      |[3979519, 3958031]                                                      |[3979519, 3958031]                                                      |
-|Pipeline |VisionTransformer|3             |2               |2015.97|2014.98|2015.59 |2016.3 |[2970001, 3472961, 3062524]                                             |[2574197, 3021793, 2635734]                                             |[2574197, 3021793, 2635734]                                             |[2574197, 3021793, 2635734]                                             |
-|Pipeline |VisionTransformer|4             |2               |1862.57|1861.44 |1862.19 |1862.48   |[2413209, 2563197, 2521879, 2436588]                                    |[2119623, 2228904, 2145561, 2112281]                                    |[2119623, 2228904, 2145561, 2112281]                                    |[2119623, 2228904, 2145561, 2112281]                                    |
-|Pipeline |VisionTransformer|5             |2               |1788.47|1786.39|1786.99 |1787.25 |[1935877, 2230125, 2003022, 2197198, 1958722]                           |[1706017, 1918617, 1732474, 1925785, 1657517]                           |[1706017, 1918617, 1732474, 1925785, 1657517]                           |[1706017, 1918617, 1732474, 1925785, 1657517]                           |
-|Pipeline |VisionTransformer|6             |2               |1718.44|1715.75|1716.21 |1716.23  |[1670025, 1965041, 1765997, 1938513, 1765997, 1693225]                  |[1478507, 1691115, 1546192, 1664987, 1546192, 1430453]                  |[1478567, 1691115, 1546192, 1664987, 1546192, 1430453]                  |[1478567, 1691115, 1546192, 1664987, 1546192, 1430453]                  |
-|Pipeline |VisionTransformer|7             |2               |1680.24|1676.8 |1676.74 |1676.7 |[1616444, 1470947, 1618210, 1705620, 1470947, 1671737, 1454147]         |[1437800, 1277582, 1436969, 1498672, 1277582, 1477999, 1229807]         |[1437800, 1277582, 1436969, 1498672, 1277582, 1477999, 1229807]         |[1437800, 1277582, 1436969, 1498672, 1277582, 1477999, 1229807]         |
-|Pipeline |VisionTransformer|8             |2               |1635.16|1631.67|1632.07   |1632.32  |[1350652, 1446284, 1445966, 1492565, 1485961, 1431457, 1377890, 1366146]|[1210541, 1278218, 1277900, 1312002, 1276935, 1209459, 1209459, 1195574]|[1210541, 1278218, 1277900, 1312002, 1276935, 1209459, 1209459, 1195574]|[1210541, 1278218, 1277900, 1312002, 1276935, 1209459, 1209459, 1195574]|
-
-
-### Result analysis
-Firstly, we notice that some results are missing, for example for FFNET we only have results on 1 or 2 GPUs etc... It's simply that when an error occurs, the result is not stored in the benchmark. But there are 4 possible types of error: 
-
-1. If the first/last GPU in the chain has only one layer, it cannot be executed.
-2. One of the GPUs has 0 layers.
-3. Cuda Out of Memory, at least 1 of the GPUs can't handle the amount of layers and data given to it.
-4. Finally, an error occurs during training.
-
-If none of these errors occur, the results are stored.
-
-So, based on this, we can see right away that no input is available with the torch API for the VisionTransformer, simply because it doesn't fit on a single GPU. As a result, the pipeline tool allows the model to be separated on multiple GPUs. Another point to note is that the tool slows down execution time anyway, due to the added communication between GPUs. So it can't be used routinely, and should only be used in really useful cases, i.e. when the model can't fit on a single GPU.
 
 ## Improvements
+In its current state, the tool works, but it hasn't been designed for performance yet. That's why the following points for improvement are important:
+
 1. Although repartition is currently performed, it is unnecessary when the model fits within a single GPU. The process should automatically avoid splitting when feasible, requiring an initial run on the largest GPU and an error-handling mechanism.
 2. Replace the rudimentary repartition method with a more efficient approach, such as employing a dichotomous search.
-3. Actually, the tool is searching for the best memory balancing between GPU. But after some execution time analysis this solution is not the best concerning execution time. One improvement should be to instead of search for the best memory balancing is to search for the best execution time. To put this solution in place : 
-    1. Change the analysis return by the script `evaluate_mem.py` to return time and not memory balancing.
-    2. Find a way to preprocess and create all potential best repartition to avoid testing all possibility that could exponetial on process time depending on the number of layers.
-    3. Change the behaviour to test all pre-calculated possibility and not stop and keep the fastest one.
+3. Actually, the tool is searching for the best memory balancing between GPUs. But after some execution time analysis, this solution is not the best concerning execution time. One improvement should be to search for the best execution time instead of the best memory balancing. To put this solution in place:
+    1. Change the analysis returned by the script [evaluate_mem.py](./pipeline_tool/evaluate_mem.py) to return time and not memory balancing.
+    2. Find a way to preprocess and create all potential best repartition to avoid testing all possibilities that could be exponential in process time depending on the number of layers.
+    3. Change the behavior to test all pre-calculated possibilities and not stop, keeping the fastest one.
 
-    Here the time analysis made, in italic are the chosen repartition and in bold the minimal execution time:
+    Here is the time analysis made, in italic are the chosen repartition, and in bold, the minimal execution time:
 
     | **Model**         | **Nb GPU** | **Repartition**                  | **Epoch 1** | **Epoch 2** | **Epoch 3** | **Minimal Epoch time** |
     | ----------------- | ---------- | -------------------------------- | ----------- | ----------- | ----------- | ---------------------- |
