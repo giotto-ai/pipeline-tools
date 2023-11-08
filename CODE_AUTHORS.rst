@@ -2,4 +2,4 @@ The following is the list of code authors of the ``pipeline-tools`` python packa
 
 Where component authors are known, add them here.
 
- - Yorick Brinet, yorick.brunet@heig-vd.ch
+ - Bruno Da Rocha Carvalho, bruno.darochacarvalho@heig-vd.ch
