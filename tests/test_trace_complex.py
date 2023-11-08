@@ -31,4 +31,5 @@ batch_first = True
 
 config_pipeline.create_mha_conf_equal(nb_mha, num_heads, embed_dim, dropout, batch_first)
 
-trace = SkippableTracing(nb_gpus=0, model=model, config=config_pipeline)
+def test_trace():
+    trace = SkippableTracing(nb_gpus=0, model=model, config=config_pipeline)
