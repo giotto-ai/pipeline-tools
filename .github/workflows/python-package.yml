@@ -38,7 +38,7 @@ jobs:
     - name: Build
       run: |
         python -m build
-        pip install /dist/*.whl
+        pip install dist/*.whl
     - name: Integration tests
       run: |
         for n in examples/*.py
