@@ -204,6 +204,9 @@ If none of these errors occur, we store the results.
 So, based on this, we can see right away that no input is available with the torch API for the VisionTransformer, simply because it doesn't fit on a single GPU. As a result, the pipeline tool allows the model to be separated on multiple GPUs; we can see that with the VisionTransformers that can only be run on more than 1 GPU. Another point to note is that the tool slows down execution time anyway, due to the added communication between GPUs; execution time between the torch API and runs of the Pipeline in 1 GPU show it clearly. So you can't use it routinely and should only use it in really useful cases, i.e., when the model can't fit on a single GPU.
 
 
+## Visual explaination of the Pipeline Tool
+A [flowchart](./img/Pipeline_tool_flowchart.png) explain all the process made by the tool for generating a complete model.
+
 ## Complex Models
 
 Unfortunately, a model is never limited to a simple linear sequence of modules taking the output of the previous operation as input... More complex models exist, and it is necessary to handle all possible cases, to trace the model correctly so that it is faithfully reproduced without omitting certain operations.
