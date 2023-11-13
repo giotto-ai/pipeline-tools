@@ -13,7 +13,7 @@ exclude = [
 [project]
 name = "pipeline_tool"
 
-version = "0.0.1"
+version = "0.0.2"
 
 authors = [
     {name="Bruno Da Rocha Carvalho", email="bruno.darochacarvalho@heig-vd.ch"},
